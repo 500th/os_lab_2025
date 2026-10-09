@@ -40,24 +40,39 @@ int main(int argc, char **argv) {
         switch (option_index) {
           case 0:
             seed = atoi(optarg);
-            // your code here
-            // error handling
+
+            // Проверка начального числа генератора
+            if (seed <= 0) {
+              printf("Seed must be positive\n");
+              return 1;
+            }
+
             break;
           case 1:
             array_size = atoi(optarg);
-            // your code here
-            // error handling
+
+            // Проверка размера массива
+            if (array_size <= 0) {
+              printf("Array size must be positive\n");
+              return 1;
+            }
+
             break;
           case 2:
             pnum = atoi(optarg);
-            // your code here
-            // error handling
+
+            // Проверка количества процессов
+            if (pnum <= 0) {
+              printf("Pnum must be positive\n");
+              return 1;
+            }
+
             break;
           case 3:
             with_files = true;
             break;
 
-          defalut:
+          default:
             printf("Index %d is out of options\n", option_index);
         }
         break;
@@ -84,9 +99,34 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  // Проверка распределения массива между процессами
+  if (pnum > array_size) {
+    printf("Too many processes\n");
+    return 1;
+  }
+
   int *array = malloc(sizeof(int) * array_size);
+
+  // Проверка выделения памяти
+  if (array == NULL) {
+    printf("Memory allocation failed\n");
+    return 1;
+  }
+
   GenerateArray(array, array_size, seed);
   int active_child_processes = 0;
+
+  // Создание каналов для передачи результатов
+  int pipes[pnum][2];
+
+  if (!with_files) {
+    for (int i = 0; i < pnum; i++) {
+      if (pipe(pipes[i]) == -1) {
+        printf("Pipe failed!\n");
+        return 1;
+      }
+    }
+  }
 
   struct timeval start_time;
   gettimeofday(&start_time, NULL);
@@ -99,14 +139,48 @@ int main(int argc, char **argv) {
       if (child_pid == 0) {
         // child process
 
-        // parallel somehow
+        // Распределение массива и поиск минимума и максимума
+        int begin = i * array_size / pnum;
+        int end = (i + 1) * array_size / pnum;
+        struct MinMax result = GetMinMax(array, begin, end);
 
         if (with_files) {
-          // use files here
+          // Запись результата в файл
+          char filename[100];
+          sprintf(filename, "result_%d.txt", i);
+
+          FILE *file = fopen(filename, "w");
+          if (file == NULL) {
+            printf("File open failed\n");
+            return 1;
+          }
+
+          fprintf(file, "%d %d\n", result.min, result.max);
+          fclose(file);
+
         } else {
-          // use pipe here
+          // Передача результата через pipe
+          for (int j = 0; j < pnum; j++) {
+            close(pipes[j][0]);
+            if (j != i) {
+              close(pipes[j][1]);
+            }
+          }
+
+          if (write(pipes[i][1], &result, sizeof(result))
+              != sizeof(result)) {
+            printf("Pipe write failed\n");
+            return 1;
+          }
+
+          close(pipes[i][1]);
         }
         return 0;
+      }
+
+      // Закрытие записи в pipe родительским процессом
+      if (!with_files) {
+        close(pipes[i][1]);
       }
 
     } else {
@@ -116,7 +190,8 @@ int main(int argc, char **argv) {
   }
 
   while (active_child_processes > 0) {
-    // your code here
+    // Ожидание завершения дочерних процессов
+    wait(NULL);
 
     active_child_processes -= 1;
   }
@@ -130,9 +205,39 @@ int main(int argc, char **argv) {
     int max = INT_MIN;
 
     if (with_files) {
-      // read from files
+      // Чтение результата из файла
+      char filename[100];
+      sprintf(filename, "result_%d.txt", i);
+
+      FILE *file = fopen(filename, "r");
+      if (file == NULL) {
+        printf("File read failed\n");
+        return 1;
+      }
+
+      if (fscanf(file, "%d %d", &min, &max) != 2) {
+        printf("Invalid file data\n");
+        fclose(file);
+        return 1;
+      }
+
+      fclose(file);
+      remove(filename);
+
     } else {
-      // read from pipes
+      // Чтение результата из pipe
+      struct MinMax result;
+
+      if (read(pipes[i][0], &result, sizeof(result))
+          != sizeof(result)) {
+        printf("Pipe read failed\n");
+        return 1;
+      }
+
+      close(pipes[i][0]);
+
+      min = result.min;
+      max = result.max;
     }
 
     if (min < min_max.min) min_max.min = min;
