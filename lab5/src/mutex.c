@@ -87,6 +87,5 @@ void do_another_thing(int *pnum_times) {
 }
 
 void do_wrap_up(int counter) {
-  int total;
   printf("All done, counter = %d\n", counter);
 }
